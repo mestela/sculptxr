@@ -327,7 +327,7 @@ const roundTrip = (meshes) => {
   check('...and a pose with no joint in this save is dropped', !lib.has('gone'));
   // And the reader stops at damage rather than loading it or running out of memory.
   const bad = new Uint32Array(buf.slice(0));
-  const countAt = bad.length - 2 - 1 - (2 + 'arms up'.length + 2 * 17) - 1 - 1 - 1;   // -1 each for the fix details' count (v31) and the fix offsets' count (v32)
+  const countAt = bad.length - 2 - 1 - (2 + 'arms up'.length + 2 * 17) - 1 - 1 - 1 - 1;   // -1 each for the fix details' count (v31), the fix offsets' count (v32), the muted fixes' count (v33) and the floating joints' count (v34)
   check('(the pose count is where this test thinks)', bad[countAt] === 1, 'read ' + bad[countAt]);
   bad[countAt + 1] = 0xdeadbeef;
   const hurt = meshes.map((m) => mk({ _id: m._id }));

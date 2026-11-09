@@ -206,32 +206,12 @@ class SculptManager {
     // tool.
     if (id !== Enums.Tools.GRAB && id !== Enums.Tools.SELECT) this._main.setMeshHoverHighlight?.(-1);
 
-    // A TOOL WHOSE ENTIRE OUTPUT IS INVISIBLE. Solid and wire are both switchable off, and with
-    // neither on the rig draws nothing at all -- so picking Bone Draw put you in a mode where
-    // every joint you placed vanished as you placed it, with the cause two panels away.
-    // matt: "if drawing bones, and the solid or wire modes are disabled, turn on solid."
-    //
-    // Only when BOTH are off: turning solid on because wire alone was disabled would be
-    // overriding a choice rather than rescuing one. And only on a real tool change, so it cannot
-    // fight someone switching solid off while already holding the tool.
-    //
-    // HIDE ALL DECORATIONS GOES TOO. It gates the READ, so with it on `displayFlag('solid')`
-    // answers no however the raw flag is set -- solid alone would not have rescued anything.
-    // matt: "if people (ie me) have hide all decorations enabled and then draw bones, its a
-    // mistake. people will need to see, and expect to see, the bones they're drawing."
-    //
-    // The two checks are independent and both run: clearing the master switch restores whatever
-    // the individual flags happened to be, which may still be neither. Raw reads throughout,
-    // since those are the stored choices rather than what the master switch is currently
-    // answering.
-    //
+    // A TOOL WHOSE ENTIRE OUTPUT IS INVISIBLE: with solid and wire both off, or Hide All
+    // Decorations on, every joint you place vanishes as you place it. Skeleton.ensureRigVisible
+    // is the one rule for that, shared with everything else that adds bones. Only on a real tool
+    // change, so it cannot fight someone switching the display off while holding the tool.
     // Before syncToolPanels below, so the chips repaint with the flags already set.
-    if (toolChanged && id === Enums.Tools.BONE_DRAW) {
-      if (Skeleton.decorationsHidden()) Skeleton.setDecorationsHidden(this._main, false);
-      if (!Skeleton.displayFlagRaw('solid') && !Skeleton.displayFlagRaw('wire')) {
-        Skeleton.setDisplayFlag('solid', true);
-      }
-    }
+    if (toolChanged && id === Enums.Tools.BONE_DRAW) Skeleton.ensureRigVisible(this._main);
 
     // The counterpart of clearPreview: a tool whose overlay outlives it (Sel Loop's edge
     // selection belongs to the mesh) puts it back up when it becomes the tool again.

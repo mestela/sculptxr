@@ -5,6 +5,7 @@ import Multimesh from '../mesh/multiresolution/Multimesh.js';
 import Enums from '../misc/Enums.js';
 import getOptionsURL from '../misc/getOptionsURL.js';
 import Skeleton from './Skeleton.js';
+import HandFit from './HandFit.js';
 
 // [Rigging POC#2] Bones -> low-poly skin. Clay over a wire armature.
 //
@@ -65,6 +66,8 @@ const BLOCK = 2;
 // not touch, so the two together have to stay under 1.0; a fat joint on a short bone is pinched
 // rather than allowed to swallow its neighbour.
 const LENGTH_CLAMP = 0.45;
+// The fraction a floating limb's hub box may reach towards each neighbour (see boxAt, support).
+const SUPPORT_CLAMP = 0.55;
 
 // How long a bridge may get before it is cut into more rings, as a multiple of the loop's own
 // edge length. Aiming for roughly square quads: a bone whose span is four edge-lengths long
@@ -108,18 +111,48 @@ const SYM_AXIS = 0;
 // Skeleton topology
 // -----------------------------------------------------------------------------------------
 
+// Joints a skipped floating joint's limbs join (a palm's far end), from the last adjacency(): their
+// boxes are clamped by support, not by nearest neighbour (see boxAt).
+let _floatHubs = new Set();
+// A limb joined to its hub THROUGH a skipped floating joint -> that floating joint (its knuckle).
+let _viaFloat = new Map();
+
 // `skip` holds the joints that deform but do not shape the skin (Skeleton.jointShapesSkin). They
 // are absent from `joints`, and a joint whose parent is one of them hangs from the nearest
 // ancestor that is not — so a jaw leaves no trace and a twist bone mid-forearm leaves one bone.
 function adjacency(joints, skip) {
+  _floatHubs = new Set();
+  _viaFloat = new Map();
   const set = new Set(joints);
   const adj = new Map();
   const bones = [];
   for (const j of joints) adj.set(j, []);
+  // Where a FLOATING joint joins the skin: the nearer end of its parent's connected bones (the
+  // parent itself, or one of its unfloating children). A finger floating off a wrist whose bone to
+  // the middle knuckle is the palm joins at that knuckle, the palm's far end, rather than bridging
+  // from the wrist through the palm volume; a thumb near the wrist joins at the wrist.
+  const attach = (j, p) => {
+    if (!Skeleton.boneFloats(j)) return p;
+    const at = Skeleton.jointPos(j);
+    let best = p, bd = Skeleton.jointPos(p).distanceTo(at);
+    for (const k of joints) {
+      if (k === j || k._parentMesh !== p || Skeleton.boneFloats(k)) continue;
+      const d = Skeleton.jointPos(k).distanceTo(at);
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
+  };
   for (const j of joints) {
     let p = j._parentMesh;
-    while (p && skip && skip.has(p)) p = p._parentMesh;
+    // Past a skipped FLOATING joint to where it joins (see skinSkip), not to its parent.
+    let viaFloat = false;
+    while (p && skip && skip.has(p)) {
+      if (Skeleton.boneFloats(p) && p._parentMesh) { _viaFloat.set(j, p); p = attach(p, p._parentMesh); viaFloat = true; break; }
+      p = p._parentMesh;
+    }
     if (!set.has(p)) continue;
+    if (!viaFloat) p = attach(j, p);
+    else _floatHubs.add(p);
     if (Skeleton.jointPos(j).distanceTo(Skeleton.jointPos(p)) < 1e-9) continue; // no direction
     adj.get(j).push(p);
     adj.get(p).push(j);
@@ -1197,12 +1230,72 @@ function cageCentre(j) {
   return c ? c.clone() : shapeCentre(j);
 }
 
+// A FINGER LEAVES THE PALM THE WAY IT POINTS, IN KNUCKLE ORDER. Box modelling cuts the palm's far
+// face into one column per finger and extrudes each straight out; the ZSphere lesson is the same
+// (fingers on the side they head for, spread across it). Measured from the palm end's centre, the
+// pinky's second joint lies mostly SIDEWAYS, so it was handed the side face and twisted round onto
+// it (matt: "it looks about the same as before"). So a limb joined through a floating knuckle is
+// seated by its own direction (knuckle -> next joint), tilted towards where its knuckle sits across
+// the hub so the fingers keep their order along the face. `d` is rewritten in place.
+const KNUCKLE_SPREAD = 0.35;
+function knuckleDir(hub, c, nb, d) {
+  const k = _viaFloat.get(nb);
+  if (!k || !_floatHubs.has(hub)) return;
+  const kp = Skeleton.jointPos(k);
+  const f = new THREE.Vector3().subVectors(cageCentre(nb), kp);
+  if (!(f.lengthSq() > 1e-12)) return;
+  f.normalize();
+  const off = new THREE.Vector3().subVectors(kp, c);
+  off.addScaledVector(f, -off.dot(f));
+  if (off.lengthSq() > 1e-12) f.addScaledVector(off.normalize(), KNUCKLE_SPREAD).normalize();
+  d.copy(f);
+}
+
+// THE PALM END IS AS WIDE AS ITS KNUCKLES. Box modelling sizes the palm box to the knuckle line and
+// cuts one column per finger; a box narrower than that seats the outer fingers inboard of their own
+// knuckles, so their bridges bend outward and roll (the pinky twisted inside out). Across the hand
+// (any axis the fingers do not run along) the box reaches each floating knuckle plus that finger's
+// radius. Grows only; the support clamp still bounds it towards real neighbours.
+// ...AND IT ENDS AT THE KNUCKLES. Centred on the knuckle line, the box's far face sat past it, up
+// against each finger's next joint, and the clamp then shrank the whole box to 62% -- narrower than
+// the knuckles again. A box-modelled palm's far face IS the knuckle line, so the box steps back
+// along the fingers by its own depth that way.
+function palmBack(hub, nbs, c) {
+  if (!_floatHubs.has(hub) || !_vols) return;
+  const half = _vols.half.get(hub);
+  if (!half) return;
+  const f = new THREE.Vector3();
+  for (const nb of nbs) {
+    const k = _viaFloat.get(nb);
+    if (k) f.add(new THREE.Vector3().subVectors(cageCentre(nb), Skeleton.jointPos(k)).normalize());
+  }
+  if (!(f.lengthSq() > 1e-12)) return;
+  f.normalize();
+  c.addScaledVector(f, -(Math.abs(f.x) * half[0] + Math.abs(f.y) * half[1] + Math.abs(f.z) * half[2]));
+}
+
+function knuckleSpan(hub, c, nbs, half) {
+  if (!_floatHubs.has(hub)) return;
+  for (const nb of nbs) {
+    const k = _viaFloat.get(nb);
+    if (!k) continue;
+    const kp = Skeleton.jointPos(k);
+    const f = new THREE.Vector3().subVectors(cageCentre(nb), kp).normalize();
+    const rad = nb._boneRadius || 0;
+    for (let a = 0; a < 3; a++) {
+      if (Math.abs(f.getComponent(a)) > 0.5) continue; // the axis the finger runs along
+      half[a] = Math.max(half[a], Math.abs(kp.getComponent(a) - c.getComponent(a)) + rad);
+    }
+  }
+}
+
 function boxAt(j, nbs) {
   // THE BLOCK SITS ON THE SHAPE, and the bones are aimed between SHAPES. Both follow from the
   // envelope being the hull of the shapes rather than of the joints: leave the block on the
   // joint and a tweaked joint gets a cage in one place and a capsule in another, with the
   // bridges stretched between them.
   const c = cageCentre(j);
+  palmBack(j, nbs, c);
   // A ROTATED JOINT'S BOX IS THE SAME BOX, TURNED. Everything below — which side a bone points
   // at, how a side divides, the per-axis counts, the clamp's support — is worked out in the box's
   // OWN frame, so the bone directions are taken into that frame here and none of it changes.
@@ -1218,6 +1311,7 @@ function boxAt(j, nbs) {
     lens.push(d.length());
     r = Math.max(r, boneRadius(j, nb));
     d.normalize();
+    knuckleDir(j, c, nb, d);
     if (qi) d.applyQuaternion(qi);
     dirs.push(d);
   }
@@ -1243,7 +1337,8 @@ function boxAt(j, nbs) {
   // how a side divides are decided exactly as before; only where the vertices sit changes. That
   // is what keeps this a shape change rather than a rewrite of the part that is hard to get
   // right.
-  const half = (_vols && _vols.half.get(j)) || Skeleton.jointHalf(j, r);
+  const half = ((_vols && _vols.half.get(j)) || Skeleton.jointHalf(j, r)).slice();
+  knuckleSpan(j, c, nbs, half);
   // ...and the clamp stays, now per axis. A block wider than half the gap to its nearest
   // neighbour reaches into that neighbour's block, and the bridge between them turns inside out.
   // Clamping each axis against the same gap keeps that guarantee in every direction: a joint
@@ -1298,11 +1393,18 @@ function boxAt(j, nbs) {
   const clampFrac = typeof window._boneSkinClamp === 'number'
     ? Math.max(0.05, Math.min(0.95, window._boneSkinClamp)) : LENGTH_CLAMP;
   let sc = 1;
-  if (window._boneSkinClampMode === 'support') {
+  // A FLOATING LIMB'S HUB IS CLAMPED BY SUPPORT. A palm end's nearest neighbour is the first finger
+  // joint, a phalanx away along the hand, so the nearest-neighbour clamp shrank its width across the
+  // hand to that and the four fingers attached through twisted slivers of a box a third of the palm.
+  // Support only limits the box towards each neighbour. Not globally: that costs intersecting faces
+  // on the fixtures (see SUPPORT above).
+  const support = window._boneSkinClampMode === 'support' || _floatHubs.has(j);
+  if (support) {
+    const frac = window._boneSkinClampMode === 'support' ? clampFrac : SUPPORT_CLAMP;
     for (let i = 0; i < dirs.length; i++) {
       const d = dirs[i];
       const reach = half[0] * Math.abs(d.x) + half[1] * Math.abs(d.y) + half[2] * Math.abs(d.z);
-      if (reach > 1e-12) sc = Math.min(sc, (lens[i] * clampFrac) / reach);
+      if (reach > 1e-12) sc = Math.min(sc, (lens[i] * frac) / reach);
     }
   } else {
     const lim = Math.min.apply(null, lens) * clampFrac;
@@ -1564,14 +1666,211 @@ function buildArrays(joints, topo) {
   return { vertices: relaxed, faces: idx, boxes: boxes.size, bones: bones };
 }
 
+// ── TEMPLATE HANDS ───────────────────────────────────────────────────────────────────────
+//
+// A wrist carrying HandTemplate's skeleton (Add Hand) is not skinned by the lattice: one tube per
+// bone made a palm that collapsed to a stem between forearm and fingers whatever the layout. Its
+// joints are left out, so the forearm ends at the wrist; that end is cut open to a ring and bridged
+// to matt's modelled hand, fitted to wherever the joints are now (HandFit).
+function skinJoints(main) {
+  const all = Skeleton.joints(main);
+  const hands = [];
+  const gone = new Set();
+  for (const j of all) {
+    const h = HandFit.handAt(main, j);
+    if (!h) continue;
+    hands.push(h);
+    for (const k of HandFit.handJoints(main, h)) gone.add(k);
+  }
+  return { all: gone.size ? all.filter((j) => !gone.has(j)) : all, hands };
+}
+
+// How far back from the wrist the forearm is cut, as a fraction of wrist -> middle knuckle: the
+// length the bridge has to taper from the forearm's section to the hand's.
+// The biped's forearm is twice the width of a hand's wrist: at 0.22 it pinched into a wineglass.
+const HAND_BRIDGE = 0.6;
+// Rings inside the bridge.
+const HAND_RINGS = 4;
+
+function attachHands(main, arr, hands) {
+  const V = Array.from(arr.vertices);
+  let F = Array.from(arr.faces);
+  const P = (i, out) => out.set(V[3 * i], V[3 * i + 1], V[3 * i + 2]);
+  const _p = new THREE.Vector3(), _c = new THREE.Vector3();
+  const nFaces = () => F.length / 4;
+  const corners = (f) => (F[4 * f + 3] === Utils.TRI_INDEX ? 3 : 4);
+  const centroid = (f, out) => {
+    out.set(0, 0, 0);
+    const n = corners(f);
+    for (let c = 0; c < n; c++) out.add(P(F[4 * f + c], _p));
+    return out.divideScalar(n);
+  };
+  for (const hand of hands) {
+    const wrist = hand.wrist, up = wrist._parentMesh;
+    const fitted = HandFit.fit(main, hand);
+    const base = V.length / 3;
+    for (let i = 0; i < fitted.verts.length; i++) V.push(fitted.verts[i]);
+    for (let i = 0; i < fitted.faces.length; i++) F.push(fitted.faces[i] + base);
+    if (!up) { console.warn('[skin] template hand: wrist has no forearm, hand left unjoined'); continue; }
+
+    // THE CUT: every face of the forearm's end past a plane HAND_BRIDGE back from the wrist, found by
+    // flooding from the face furthest out along the forearm, so nothing else past that plane (a thigh
+    // beside a hanging hand) is touched.
+    const W = Skeleton.jointPos(wrist), d = new THREE.Vector3().subVectors(W, Skeleton.jointPos(up)).normalize();
+    const M = Skeleton.jointPos(hand.by.get('middle_01'));
+    const gap = HAND_BRIDGE * W.distanceTo(M);
+    const handDir = new THREE.Vector3().subVectors(M, W).normalize();
+    const rf = Math.max(Skeleton.boneRadiusOf(main, wrist), 1e-6) * 3;
+    const along = (f) => centroid(f, _c).sub(W).dot(d);
+    const offAxis = (f) => { centroid(f, _c).sub(W); return _c.addScaledVector(d, -_c.dot(d)).length(); };
+    const handFaces = new Set();
+    for (let f = 0; f < fitted.faces.length / 4; f++) handFaces.add(F.length / 4 - fitted.faces.length / 4 + f);
+    let seed = -1, best = -Infinity;
+    for (let f = 0; f < nFaces(); f++) {
+      if (handFaces.has(f)) continue;
+      const t = along(f);
+      if (t > -gap && t < rf * 2 && offAxis(f) < rf && t > best) { best = t; seed = f; }
+    }
+    if (seed < 0) { console.warn('[skin] template hand: no forearm end found, hand left unjoined'); continue; }
+    const edgeFaces = new Map();
+    const ek = (x, y) => (x < y ? x + '_' + y : y + '_' + x);
+    for (let f = 0; f < nFaces(); f++) {
+      const n = corners(f);
+      for (let c = 0; c < n; c++) {
+        const k = ek(F[4 * f + c], F[4 * f + (c + 1) % n]);
+        if (!edgeFaces.has(k)) edgeFaces.set(k, []);
+        edgeFaces.get(k).push(f);
+      }
+    }
+    const cut = new Set([seed]);
+    const stack = [seed];
+    while (stack.length) {
+      const f = stack.pop(), n = corners(f);
+      for (let c = 0; c < n; c++) {
+        for (const g of edgeFaces.get(ek(F[4 * f + c], F[4 * f + (c + 1) % n]))) {
+          if (cut.has(g) || handFaces.has(g) || along(g) <= -gap) continue;
+          cut.add(g); stack.push(g);
+        }
+      }
+    }
+    // A PLANE CROSSES THE RINGS ON A SLANT and leaves a staircase. A kept face touching the cut on two
+    // or more edges is a notch in it: fill notches until none are left, and the rim is a whole ring.
+    for (let grew = true; grew;) {
+      grew = false;
+      for (let f = 0; f < nFaces(); f++) {
+        if (cut.has(f) || handFaces.has(f)) continue;
+        const n = corners(f);
+        let touch = 0;
+        for (let c = 0; c < n; c++) {
+          if (edgeFaces.get(ek(F[4 * f + c], F[4 * f + (c + 1) % n])).some((g) => cut.has(g))) touch++;
+        }
+        if (touch >= 2) { cut.add(f); grew = true; }
+      }
+    }
+    // The ring left behind, in the direction the KEPT faces run it.
+    const next = new Map();
+    for (let f = 0; f < nFaces(); f++) {
+      if (cut.has(f) || handFaces.has(f)) continue;
+      const n = corners(f);
+      for (let c = 0; c < n; c++) {
+        const x = F[4 * f + c], y = F[4 * f + (c + 1) % n];
+        if (edgeFaces.get(ek(x, y)).some((g) => cut.has(g))) next.set(x, y);
+      }
+    }
+    const ring = [];
+    if (next.size) {
+      let x = next.keys().next().value;
+      while (ring.length <= next.size && x !== undefined) { ring.push(x); x = next.get(x); if (x === ring[0]) break; }
+    }
+    const L = fitted.loop.length;
+    if (ring.length !== L || next.size !== L) {
+      console.warn('[skin] template hand: forearm cut gave a ' + next.size + '-edge rim, not ' + L + '; hand left unjoined');
+      continue;
+    }
+    for (let f = nFaces() - 1; f >= 0; f--) if (cut.has(f)) F.splice(4 * f, 4);
+
+    // THE HAND'S RING in the order its faces run it, then turned round and rolled to sit against the
+    // forearm's: the bridge runs each ring against the faces on both sides.
+    const lp = fitted.loop.map((i) => i + base);
+    let fwd = false;
+    for (let f = 0; f < fitted.faces.length / 4 && !fwd; f++) {
+      for (let c = 0; c < 4; c++) {
+        if (fitted.faces[4 * f + c] + base === lp[0] && fitted.faces[4 * f + (c + 1) % 4] + base === lp[1]) fwd = true;
+      }
+    }
+    const hring = fwd ? lp.slice() : lp.slice().reverse();     // in face order
+    const want = hring.slice().reverse();                      // bridge runs it backwards
+    let roll = 0, cost = Infinity;
+    const a = new THREE.Vector3(), b = new THREE.Vector3();
+    for (let r = 0; r < L; r++) {
+      let s = 0;
+      for (let i = 0; i < L; i++) s += P(ring[i], a).distanceToSquared(P(want[(i + r) % L], b));
+      if (s < cost) { cost = s; roll = r; }
+    }
+    const B = ring.map((_, i) => want[(i + roll) % L]);
+    // ring[i] -> ring[i+1] is the KEPT face's direction, so the bridge takes ring[i+1] -> ring[i];
+    // B is ordered the same way round, and the hand's faces run it the other way.
+    let prev = ring;
+    for (let k = 1; k <= HAND_RINGS + 1; k++) {
+      let cur;
+      if (k === HAND_RINGS + 1) cur = B;
+      else {
+        // A HERMITE CURVE per vertex pair, leaving the forearm along the forearm and arriving along
+        // the hand, so the taper eases in and out rather than kinking at both rims.
+        const t = k / (HAND_RINGS + 1), t2 = t * t, t3 = t2 * t;
+        const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+        cur = ring.map((ri, i) => {
+          P(ri, a); P(B[i], b);
+          const len = a.distanceTo(b);
+          const x = new THREE.Vector3().copy(a).multiplyScalar(h00).addScaledVector(d, h10 * len)
+            .addScaledVector(b, h01).addScaledVector(handDir, h11 * len);
+          V.push(x.x, x.y, x.z);
+          return V.length / 3 - 1;
+        });
+      }
+      for (let i = 0; i < L; i++) {
+        const i1 = (i + 1) % L;
+        F.push(prev[i1], prev[i], cur[i], cur[i1]);
+      }
+      prev = cur;
+    }
+  }
+  // Repack: the cut leaves its vertices behind.
+  const used = new Map();
+  for (const f of F) if (f !== Utils.TRI_INDEX && !used.has(f)) used.set(f, used.size);
+  const vertices = new Float32Array(used.size * 3);
+  for (const [old, now] of used) { vertices[3 * now] = V[3 * old]; vertices[3 * now + 1] = V[3 * old + 1]; vertices[3 * now + 2] = V[3 * old + 2]; }
+  const faces = new Uint32Array(F.length);
+  for (let i = 0; i < F.length; i++) faces[i] = F[i] === Utils.TRI_INDEX ? Utils.TRI_INDEX : used.get(F[i]);
+  return Object.assign({}, arr, { vertices, faces });
+}
+
+// The joints that get no box: Shapes Skin off, and every FLOATING joint with bones of its own.
+//
+// A floating knuckle's box sat right beside the middle knuckle's, and the box clamp (each box under
+// half the gap to its nearest neighbour) shrank both to slivers: four fingers crammed onto a tiny
+// palm end, joined sideways at a right angle the relax inflated over and a smooth pulled into thin
+// necks. matt: "i checked the hand, no, its done a pretty bad job there too." With no box of its
+// own, a floating joint's limb runs straight from where it joins (adjacency), whose box is now
+// sized by real neighbours, so the fingers fan out of one palm block. A floating LEAF keeps its box:
+// with nothing leaving it there is no limb to run on.
+//
+// Not the hips: legs floating off a pelvis this way meet in one trunk (a wishbone, hips .39 against
+// .245 on biped_resculpt), because the thigh tops are where the hip mass is. Hips keep connected
+// hip bones.
+function skinSkip(all) {
+  const parents = new Set(all.map((k) => k._parentMesh));
+  return new Set(all.filter((j) => !Skeleton.jointShapesSkin(j) || (Skeleton.boneFloats(j) && parents.has(j))));
+}
+
 // Build a skin for the whole skeleton and add it to the scene as a new mesh.
 //
 // The vertices are written in MODEL space and the mesh keeps an identity matrix, so the skin
 // lands exactly on the skeleton it came from. No normalizeSize() — the whole point is that the
 // proportions are the ones already drawn.
 SkinMesh.build = function (main) {
-  const all = Skeleton.joints(main);
-  const skip = new Set(all.filter((j) => !Skeleton.jointShapesSkin(j)));
+  const { all, hands } = skinJoints(main);
+  const skip = skinSkip(all);
   const joints = skip.size ? all.filter((j) => !skip.has(j)) : all;
   if (!joints.length) return { ok: false, why: 'draw a bone chain first' };
 
@@ -1580,8 +1879,9 @@ SkinMesh.build = function (main) {
 
   const t0 = performance.now();
   _vols = volumeShapes(main, all);
-  const arr = buildArrays(joints, topo);
+  let arr = buildArrays(joints, topo);
   if (!arr) return { ok: false, why: 'could not build a skin from this skeleton' };
+  if (hands.length) arr = attachHands(main, arr, hands);
 
   const base = new MeshStatic(main._gl);
   base.setVertices(arr.vertices);
@@ -1620,8 +1920,8 @@ SkinMesh.build = function (main) {
 //     a whole face is 16. That is the flat, ribboned root, and it is not a bug — it is the face
 //     being divided as far as it goes.
 SkinMesh.attachments = function (main) {
-  const all = Skeleton.joints(main);
-  const skip = new Set(all.filter((j) => !Skeleton.jointShapesSkin(j)));
+  const { all } = skinJoints(main);
+  const skip = skinSkip(all);
   const joints = skip.size ? all.filter((j) => !skip.has(j)) : all;
   if (!joints.length) return null;
   const topo = adjacency(joints, skip);

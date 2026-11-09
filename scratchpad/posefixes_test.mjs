@@ -33,7 +33,7 @@ check('...and the status says pre', /if \(on && !layer && !fixMuted\(mesh, on\)\
 check('deleting a fix forgets its mute', /t\.correctiveMuted\?\.delete\(key\);/.test(rp), 'a new fix on that pose would start off');
 check('undoing a delete brings it back', /if \(muted\) \(t\.correctiveMuted/.test(rp));
 check('muting applies at once', /RigPoses\.drive\(main\);\s*main\.render\?\.\(\);/.test(rp));
-check('saved', /u\[o\+\+\] = fixMuted\.length;/.test(sk) && /const SKEL_VERSION = 33;/.test(sk));
+check('saved', /u\[o\+\+\] = fixMuted\.length;/.test(sk) && +(/const SKEL_VERSION = (\d+);/.exec(sk) || [])[1] >= 33);
 check('...its slots are counted', /for \(const d of fixMuted\) slots \+= 2 \+ d\.key\.length;/.test(sk));
 check('...and loaded', /if \(ver >= 33\)/.test(sk) && /if \(t\) \(t\.correctiveMuted \|\| \(t\.correctiveMuted = new Set\(\)\)\)\.add\(key\);/.test(sk));
 for (const f of ['correctivePost', 'correctiveDetails', 'correctiveW', 'correctiveMuted']) {

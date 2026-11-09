@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mat4 } from 'gl-matrix';
 import Skeleton from './Skeleton.js';
+import HandCapture from './HandCapture.js';
 import NodeMaterials from '../render/nodes/NodeMaterials.js';
 
 // MIRROR CAPTURE: record the headset and both hands onto three nulls, with a mirror in front of
@@ -264,6 +265,21 @@ const MirrorCapture = {
     r.startRecording(n.head);
     r.addInteractionTarget(n.left);
     r.addInteractionTarget(n.right);
+    // FINGERS, only for a side whose hand is TRACKED as the take starts and whose rig has a named
+    // hand (HandCapture). A controller take adds nothing, so it cannot flatten finger keys that
+    // are already there.
+    this._fingerRigs = {};
+    const data = this._handData(main, this._readPose(main));
+    const rigs = HandCapture.rigHands(main);
+    const took = [];
+    for (const k of ['left', 'right']) {
+      if (!data[k] || !rigs[k]) continue;
+      this._fingerRigs[k] = rigs[k];
+      HandCapture.drive(rigs[k], data[k]);
+      for (const j of HandCapture.joints(rigs[k])) r.addInteractionTarget(j);
+      took.push(k);
+    }
+    if (took.length) window.screenLog?.('Mirror capture: fingers ' + took.join(' + '), 'cyan');
     return true;
   },
 
@@ -343,7 +359,15 @@ const MirrorCapture = {
     }
 
     // Through the count-in too, so the nulls are already on you when capture begins.
-    if (r && (r.isRecording || r.isCountingIn) && ours) this._driveAll(pose);
+    if (r && (r.isRecording || r.isCountingIn) && ours) {
+      this._driveAll(pose);
+      const fr = this._fingerRigs;
+      if (fr && (fr.left || fr.right)) {
+        const data = this._handData(main, pose);
+        for (const k of ['left', 'right']) if (fr[k] && data[k]) HandCapture.drive(fr[k], data[k]);
+      }
+    }
+    this._fingerLines(main, pose, replay);
 
     this._pokeButton(main, pose);
     tint(this._btn, r?.isRecording ? COL.rec : (r?.isCountingIn ? COL.armed : COL.idle));
@@ -356,6 +380,55 @@ const MirrorCapture = {
     if (pose.head) this._drive(n.head, pose.head);
     if (pose.left) this._drive(n.left, pose.left);
     if (pose.right) this._drive(n.right, pose.right);
+  },
+
+  // Tracked joint positions per hand this frame ({ left, right }, null where not tracked).
+  _handData(main, pose) {
+    const out = { left: null, right: null };
+    const xr = main._renderer?.xr;
+    const frame = xr?.getFrame?.(), ref = xr?.getReferenceSpace?.();
+    if (!pose || !frame || !ref) return out;
+    for (const k of ['left', 'right']) {
+      const grip = pose[k + 'Grip'];
+      const src = grip && (grip._originalInputSource || grip._inputSource);
+      if (src?.hand) out[k] = HandCapture.readXR(frame, ref, src.hand);
+    }
+    return out;
+  },
+
+  // THE FINGERS IN THE MIRROR: the tracked bones as lines, reflected, so you can see what the
+  // capture sees. Live only (a replay shows the rig playing back instead); the paddle hides while
+  // they show.
+  _fingerLines(main, pose, replay) {
+    const data = replay ? { left: null, right: null } : this._handData(main, pose);
+    for (const k of ['left', 'right']) {
+      let l = this._fingers?.[k];
+      const xr = data[k];
+      if (!xr) { if (l) l.visible = false; continue; }
+      if (!l) {
+        this._fingers = this._fingers || {};
+        const n = HandCapture.FINGERS.length * 4;   // wrist->knuckle, then three bones per finger
+        l = lines(new Array(n * 6).fill(0), k === 'left' ? 0x66e0ff : 0xffa060);
+        l.matrixAutoUpdate = false;
+        l.renderOrder = ORDER_PROXY;
+        this._proxyRoot.add(l);
+        this._fingers[k] = l;
+      }
+      const a = l.geometry.attributes.position;
+      let i = 0;
+      const seg = (p, q) => { a.setXYZ(i++, p.x, p.y, p.z); a.setXYZ(i++, q.x, q.y, q.z); };
+      for (const f of HandCapture.FINGERS) {
+        const names = HandCapture.XR[f];
+        seg(xr.wrist, xr[names[0]]);
+        for (let s = 0; s < 3; s++) seg(xr[names[s]], xr[names[s + 1]]);
+      }
+      a.needsUpdate = true;
+      l.matrix.copy(this._refl);
+      l.matrixWorldNeedsUpdate = true;
+      l.visible = true;
+      const pad = this._proxies[k]._paddle;
+      if (pad) pad.visible = false;
+    }
   },
 
   // Measure each tracked hand's paddle in its grip frame (see handShape).

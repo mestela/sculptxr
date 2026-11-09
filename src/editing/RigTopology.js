@@ -28,6 +28,8 @@ import * as THREE from 'three';
 import { mat4 } from 'gl-matrix';
 import Skeleton from './Skeleton.js';
 import IKSolver from './IKSolver.js';
+import HandTemplate from './HandTemplate.js';
+import HandFit from './HandFit.js';
 
 const RigTopology = {};
 
@@ -143,6 +145,7 @@ RigTopology.split = function (main, joint, t) {
 
   const before = snapshot(main, targets);
   const mids = [];
+  const moved = [];   // targets whose root end went to the new joint (snapshot does not carry it)
 
   for (const target of targets) {
     const tp = target._parentMesh;
@@ -154,13 +157,15 @@ RigTopology.split = function (main, joint, t) {
     // Created under the SAME parent, then the old child moves under it — so the chain reads
     // parent -> new -> joint and every joint below `joint` comes along untouched.
     const m = Skeleton.createJoint(main, tpos, tp, splitName(tp, target), { silent: true });
-    // The radius is a property of the bone, and the new joint sits inside the old one — take the
-    // interpolated value rather than the default, or the chain visibly pinches at the new joint.
-    if (Number.isFinite(target._boneRadius) && Number.isFinite(tp._boneRadius)) {
-      m._boneRadius = tp._boneRadius + (target._boneRadius - tp._boneRadius) * u;
-    } else if (Number.isFinite(target._boneRadius)) {
-      m._boneRadius = target._boneRadius;
-    }
+    // BOTH HALVES ARE THE BONE BEING SPLIT. A joint's radius and volume describe the bone coming
+    // INTO it, so the split bone's are on `target`, and the new first half takes them whole. It
+    // used to blend toward `tp._boneRadius`, which is the bone ABOVE (the chest, for a shoulder
+    // bone): a split clavicle came out 1.95 thick on a 1.04 bone and the skin grew a hump there.
+    // Same for the section, twist, offset and roundness, so the volume reads as one piece cut in
+    // two; the dragged ends go to whichever half still owns that end.
+    if (Number.isFinite(target._boneRadius)) m._boneRadius = target._boneRadius;
+    for (const k of ['_volW', '_volH', '_volR', '_volO1', '_volO3', '_volP']) if (target[k] !== undefined) m[k] = target[k];
+    if (target._volE0 !== undefined) { m._volE0 = target._volE0; moved.push(target); delete target._volE0; }
     main.setMeshParent(target.getID(), m.getID(), { silent: true });
 
     // Rest is the pose the solver seeds from; a joint created now has none, so give it the pose
@@ -187,7 +192,14 @@ RigTopology.split = function (main, joint, t) {
   }
 
   restore(main, after);   // one path for doing it and for redoing it
-  commit(main, before, after, mids.length === 2 ? 'Split Bone (mirrored)' : 'Split Bone');
+  const label = mids.length === 2 ? 'Split Bone (mirrored)' : 'Split Bone';
+  if (!moved.length) commit(main, before, after, label);
+  else {
+    const e0 = moved.map((t) => mids[targets.indexOf(t)]._volE0);
+    main.getStateManager?.()?.pushStateCustom?.(
+      () => { moved.forEach((t, i) => { t._volE0 = e0[i]; }); restore(main, before); },
+      () => { moved.forEach((t) => { delete t._volE0; }); restore(main, after); }, false, label);
+  }
   return mids[0];
 };
 
@@ -420,6 +432,7 @@ function copyJoint(main, src, pos, parent, name, plane) {
   // The shape's rotation reflects like the offset does: a twin's turn is the mirror image of its
   // partner's, or a curled left finger comes out curled the wrong way on the right hand.
   if (!Skeleton.jointShapesSkin(src)) Skeleton.setJointShapesSkin(c, false);
+  if (Skeleton.boneFloats(src)) Skeleton.setBoneFloats(c, true);
   if (Skeleton.jointRotIsSet(src)) {
     const r = plane ? Skeleton.mirrorRot(src._jointRot, plane.normal) : src._jointRot;
     Skeleton.setJointRot(c, r[0], r[1], r[2], r[3]);
@@ -643,4 +656,129 @@ RigTopology.symmetrize = function (main, dir) {
   console.log('[rig] symmetrize ' + (dir === 1 ? 'R->L' : 'L->R')
     + ': ' + made.length + ' joint(s) mirrored, ' + goneList.length + ' removed');
   return { made: made.length, removed: goneList.length };
+};
+
+// ── ADD HAND ─────────────────────────────────────────────────────────────────
+//
+// A five-finger hand built onto a wrist joint: the skeleton of HandTemplate, matt's box-modelled
+// hand, placed and scaled to the wrist. Thumb `thumb_01..04` (01 = the WebXR thumb metacarpal);
+// each finger `<finger>_00` (the WebXR metacarpal, at the base of the palm) then `_01..04`.
+//
+// THE NAMES ARE LOAD-BEARING: HandCapture finds a rig's fingers by them and maps each joint to
+// the WebXR hand joint at the same knuckle (index_01 = index-finger-phalanx-proximal, ...,
+// thumb_01 = thumb-metacarpal), and Make Skin finds a TEMPLATE HAND by them (a wrist carrying
+// thumb_01 and the four _00s): it builds the skin up to the wrist and fits the template mesh to
+// these joints rather than generating fingers. A lattice could not: one tube per bone gave a
+// palm that collapsed to a stem between forearm and fingers, whatever the layout (2026-11-09).
+
+function handSide(main, wrist) {
+  const m = /(_[LR])$/.exec(wrist._permanentStaticLabel || '');
+  if (m) return m[1];
+  const x = Skeleton.jointPos(wrist).x;
+  return x > 1e-6 ? '_L' : (x < -1e-6 ? '_R' : '');
+}
+
+// The stub a hand replaces: the wrist's only child, when it is a leaf.
+function handStub(main, wrist) {
+  const kids = Skeleton.childJoints(main, wrist).filter((k) => Skeleton.isJoint(k));
+  if (kids.length !== 1) return null;
+  return Skeleton.childJoints(main, kids[0]).some((k) => Skeleton.isJoint(k)) ? null : kids[0];
+}
+
+RigTopology.canAddHand = function (main, wrist) {
+  if (!wrist || !Skeleton.isJoint(wrist) || main.getIndexMesh(wrist) < 0) return false;
+  const kids = Skeleton.childJoints(main, wrist).filter((k) => Skeleton.isJoint(k));
+  if (kids.length === 0) return !!(wrist._parentMesh && Skeleton.isJoint(wrist._parentMesh));
+  return !!handStub(main, wrist);
+};
+
+// The joint positions (model space) for one hand, as [{ name, parent, pos, r }], parents first
+// (`parent` null = the wrist). Pure geometry, so the twin is the same list reflected.
+function handPoints(main, wrist, side) {
+  const W = Skeleton.jointPos(wrist);
+  const stub = handStub(main, wrist);
+  const a = new THREE.Vector3();
+  let H;
+  if (stub) {
+    a.copy(Skeleton.jointPos(stub)).sub(W);
+    H = a.length();
+  } else {
+    a.copy(W).sub(Skeleton.jointPos(wrist._parentMesh));
+    H = a.length() * 0.85;
+  }
+  if (!(H > 1e-6)) return null;
+  a.normalize();
+  const { f, p } = HandFit.handFrame(a, side);
+  const k = H / HandTemplate.H;
+  const T = HandTemplate.joints;
+  const depth = (i) => { let d = 0; for (let q = T[i].p; q >= 0; q = T[q].p) d++; return d; };
+  const order = T.map((_, i) => i).filter((i) => T[i].n !== 'wrist').sort((x, y) => depth(x) - depth(y));
+  return order.map((i) => {
+    const t = T[i], par = t.p >= 0 && T[t.p].n !== 'wrist' ? T[t.p].n + side : null;
+    return { name: t.n + side, parent: par, pos: HandFit.toRig(t.pos, W, a, f, p, k, new THREE.Vector3()), r: t.r * k };
+  });
+}
+
+RigTopology.addHand = function (main, wrist) {
+  if (!RigTopology.canAddHand(main, wrist)) {
+    console.log('[rig] add hand refused: needs a wrist with no children, or one hand-length leaf');
+    return null;
+  }
+  const twin = (Skeleton.mirrorEdits(main) && wrist._boneMirror && wrist._boneMirror !== wrist
+    && RigTopology.canAddHand(main, wrist._boneMirror)) ? wrist._boneMirror : null;
+  const wrists = twin ? [wrist, twin] : [wrist];
+
+  // A pinned stub holds a control the user placed; replacing it would silently drop the pin.
+  for (const w of wrists) {
+    const stub = handStub(main, w);
+    if (stub && IKSolver.pinObject(stub)) {
+      window.screenLog?.('Add Hand: unpin ' + (stub._permanentStaticLabel || 'the hand end') + ' first', 'orange');
+      return null;
+    }
+  }
+
+  const side = handSide(main, wrist);
+  const pts = handPoints(main, wrist, side);
+  if (!pts) return null;
+  const plane = Skeleton._computeSymmetryPlane(main, true);
+  const tSide = side === '_L' ? '_R' : (side === '_R' ? '_L' : '_R');
+  const stubs = wrists.map((w) => handStub(main, w)).filter(Boolean);
+  const goneBefore = snapshot(main, stubs);
+  for (const s of stubs) main.removeMeshSilent(s);
+
+  const made = [];
+  const build = (w, list) => {
+    const byName = {};
+    const joints = [];
+    for (const e of list) {
+      const j = Skeleton.createJoint(main, e.pos, e.parent ? byName[e.parent] : w, e.name, { silent: true });
+      j._boneRadius = e.r;
+      j._ikRest = mat4.clone(j.getMatrix());
+      byName[e.name] = j;
+      joints.push(j);
+      made.push(j);
+    }
+    return joints;
+  };
+  const mine = build(wrist, pts);
+  if (twin) {
+    const tw = (n) => n && n.slice(0, n.length - side.length) + tSide;
+    const mp = pts.map((e) => Object.assign({}, e, {
+      name: tw(e.name), parent: tw(e.parent),
+      pos: Skeleton.mirrorPoint(e.pos, plane, new THREE.Vector3()),
+    }));
+    const theirs = build(twin, mp);
+    mine.forEach((j, i) => { j._boneMirror = theirs[i]; theirs[i]._boneMirror = j; });
+  }
+
+  const madeBefore = made.map((c) => ({
+    mesh: c, parent: c._parentMesh || null, matrix: mat4.clone(c.getMatrix()),
+    rest: c._ikRest ? mat4.clone(c._ikRest) : null, present: false, mirror: null,
+  }));
+  const before = goneBefore.concat(madeBefore);
+  const after = snapshot(main, made).concat(goneBefore.map((e) => Object.assign({}, e, { present: false })));
+  restore(main, after);
+  commit(main, before, after, twin ? 'Add Hands' : 'Add Hand');
+  console.log('[rig] add hand: ' + made.length + ' joint(s), ' + stubs.length + ' stub(s) replaced');
+  return mine[0];
 };

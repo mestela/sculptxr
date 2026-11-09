@@ -56,7 +56,6 @@ import PhysicsBones from './editing/PhysicsBones.js';
 import { togglePhysicsBone } from './gui/bonePanel.js';
 import RigTopology from './editing/RigTopology.js';
 import RigPlacing from './editing/RigPlacing.js';
-import HumanBase from './drawables/HumanBase.js';
 import Primitives from './drawables/Primitives.js';
 import StateManager from './states/StateManager.js';
 import RenderData from './mesh/RenderData.js';
@@ -6918,27 +6917,6 @@ class Scene {
         () => { apply(B, K.elements); setRelated(true); this.render(); }
       );
     }
-  }
-
-  // A HUMAN FIGURE, from MakeHuman's CC0 base mesh. Async because the geometry is a fetched
-  // asset rather than a procedural primitive — see drawables/HumanBase.js for the provenance.
-  //
-  // Marked `isQuad` like the grids: it is 13,378 quads of authored topology, and that is the
-  // whole point of it. Sculpting it destroys nothing — the quads survive subdivision — so it
-  // doubles as a retopology target for a head or body sculpted from a sphere.
-  async addHumanBase() {
-    try {
-      await HumanBase.load();
-    } catch (e) {
-      console.error('[humanbase] could not load the base mesh', e);
-      if (window.screenLog) window.screenLog('Base mesh failed to load', 'red');
-      return null;
-    }
-    const mesh = new Multimesh(HumanBase.build(this._gl));
-    mesh.normalizeSize();
-    mesh._typeName = 'Human';
-    mesh.isQuad = true;
-    return this._addPrimitive(mesh);
   }
 
   // PRIMITIVES ARRIVE WITH A SCALE ALREADY ON THEM, AND SHOULD NOT.

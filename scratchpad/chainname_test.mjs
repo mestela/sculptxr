@@ -692,7 +692,7 @@ const label = (m) => m._permanentStaticLabel;
     /e\.nameLabel\.sprite\.position\.copy\(_pB\)\.addScaledVector\(_up, jd \* [\d.]+\)/.test(SK2),
     'half a bone away from the joint it names is where this started');
   check('...and drawn before the bone is considered, so a chain root gets one too',
-    SK2.indexOf('setLabelText(e.nameLabel') < SK2.indexOf('const hasBone = Skeleton.isJoint(parent)'),
+    SK2.indexOf('setLabelText(e.nameLabel') < SK2.indexOf('const linked = Skeleton.isJoint(parent)'),
     'the root has no bone ending at it, which is exactly why it had no name');
   check('...the length stays on the bone midpoint',
     /e\.label\.sprite\.position\.copy\(_pA\)\.addScaledVector\(_dir, 0\.5\)/.test(SK2));

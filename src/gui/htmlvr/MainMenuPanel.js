@@ -3166,7 +3166,6 @@ export function buildSectionHTML_scene(main) {
       <button class="mm-select-opt" id="mm-add-null">Null</button>
       <button class="mm-select-opt" id="mm-add-light" title="A point light you place like any other object — move it, parent it to a bone, keyframe it">Light</button>
       <button class="mm-select-opt" id="mm-add-voxel" title="Spawn an empty voxel object and switch to the Voxel tool">Voxel</button>
-      <button class="mm-select-opt" id="mm-add-human" title="MakeHuman's CC0 base mesh — 13k quads of authored topology, to sculpt on or to conform to">Human</button>
     </div>
     <div class="mm-outliner-wrap">
       <div class="mm-outliner-list">${meshRows}</div>
@@ -5704,20 +5703,6 @@ export function wireSectionScene(el, main, repaintFn, vrPanel = null) {
   el.querySelector('#mm-add-cube')?.addEventListener('click', () => addPrimitive(() => main.addCube?.()));
   el.querySelector('#mm-add-cylinder')?.addEventListener('click', () => addPrimitive(() => main.addCylinder?.()));
   el.querySelector('#mm-add-plane')?.addEventListener('click', () => addPrimitive(() => main.addPlane8x8?.()));
-  // ASYNC, unlike the others: the geometry is a fetched asset. addPrimitive expects `make()` to
-  // return the mesh synchronously (it may adopt it into a frame group), so the await happens
-  // first and the shared path runs once the mesh exists.
-  el.querySelector('#mm-add-human')?.addEventListener('click', async () => {
-    const btn = el.querySelector('#mm-add-human');
-    if (btn) { btn.disabled = true; btn.textContent = '...'; }
-    try {
-      await main.addHumanBase?.();
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = 'Human'; }
-    }
-    cancelPending();
-    main.render?.(); repaintFn();
-  });
   el.querySelector('#mm-add-null')?.addEventListener('click', () => {
     cancelPending(); main.addNull?.(); main.render?.(); repaintFn();
   });

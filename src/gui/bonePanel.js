@@ -564,6 +564,11 @@ export function buildBoneAuthoringHTML(main, style) {
     </div>
     <div class="${c.toggles}">
       <button class="${c.toggle}" id="bone-name-chain"${chainAim ? '' : ' disabled'}>Name</button>
+      <button class="${c.toggle}" id="bone-add-hand"${RigTopology.canAddHand(main, chainAim) ? '' : ' disabled'}
+        title="Build a five-finger hand on this wrist (and its mirror twin with Symmetry on). A wrist ending in one short leaf has the leaf replaced by the hand. Fingers are named for hand capture.">Add Hand</button>
+      <button class="${c.toggle}${chainAim && !Skeleton.boneFloats(chainAim) ? ' active' : ''}" id="bone-connected"${
+        chainAim && Skeleton.isJoint(chainAim._parentMesh) ? '' : ' disabled'}
+        title="Off: this joint FLOATS off its parent -- it still moves with it, but there is no bone between them (a dashed line), no volume and no weight. Make Skin joins it to the nearer end of the parent's connected bone. For finger roots off a palm, legs off a pelvis, a clavicle off a ribcage.">Connected</button>
     </div>`;
 
     // ── AXES: a joint's local axes, laid out by hand with the rotate gizmo ─────────────────
@@ -1306,6 +1311,29 @@ export function wireBoneSection(root, main, opts) {
     refresh();
   });
 
+  // CONNECTED OR FLOATING. Floating keeps the parenting and drops the bone: no volume, no weight,
+  // drawn as a dashed line (Skeleton.boneFloats). Same shape as Shapes Skin: twin follows, weights
+  // re-solve, one undo step.
+  q('connected')?.addEventListener('click', () => {
+    const j0 = rigPanelTarget(main);
+    if (!j0 || !Skeleton.isJoint(j0._parentMesh)) return;
+    const twin = Skeleton.mirrorEdits(main) ? j0._boneMirror : null;
+    const rows = [j0];
+    if (twin && twin !== j0 && main.getMeshes?.().includes(twin)) rows.push(twin);
+    const floats = !Skeleton.boneFloats(j0);
+    const apply = (v) => {
+      for (const j of rows) Skeleton.setBoneFloats(j, v);
+      q('connected')?.classList.toggle('active', !v);
+      Skinning.resolveWeightsAll(main);
+      Skeleton.updateVisuals(main);
+      main.render?.();
+    };
+    apply(floats);
+    main.getStateManager?.()?.pushStateCustom?.(
+      () => apply(!floats), () => apply(floats), false, floats ? 'Float Joint' : 'Connect Joint');
+    refresh();
+  });
+
   q('sym')?.addEventListener('click', () => {
     const sm = main.getSculptManager?.();
     if (!sm) return;
@@ -2001,6 +2029,12 @@ export function wireBoneSection(root, main, opts) {
     // the twin is included on exactly the same terms -- only while mirrorEdits is on, and only
     // when the twin is a different live joint.
     chainCmd('dissolve', (j) => { for (const t of withTwin(j)) RigTopology.dissolve(main, t); });
+    // Add Hand mirrors on its own (it pairs the two hands' fingers as twins), so no withTwin.
+    chainCmd('add-hand', (j) => {
+      const made = RigTopology.addHand(main, j);
+      say(made ? 'Bones: hand added' + (j._boneMirror && Skeleton.mirrorEdits(main) ? ' to both wrists' : '')
+        : 'Bones: Add Hand needs a wrist with no children, or one short leaf (unpinned)', !!made);
+    });
     // A LIST FIRST, THE KEYBOARD LAST, IN A PANEL THAT FLOATS IN FRONT OF THIS ONE.
     //
     // It was the keyboard and nothing else, which is the wrong order of preference: the names
@@ -2181,6 +2215,7 @@ export function syncBoneSection(root, main) {
   {
     const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
     if (sel.length === 1) setFlag('shapes-skin', Skeleton.jointShapesSkin(sel[0]));
+
   }
   {
     // Label AND state: the button says which way it will go, so it has to be rewritten rather

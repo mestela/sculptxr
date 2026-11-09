@@ -2471,7 +2471,20 @@ Skeleton.volumeFrame = function (main, j, out) {
 };
 
 Skeleton.boneHasCapsule = function (j) {
-  return !!j && Skeleton.isJoint(j._parentMesh) && (j._boneRadius || 0) > 1e-9 && Skeleton.jointShapesSkin(j);
+  return !!j && Skeleton.isJoint(j._parentMesh) && (j._boneRadius || 0) > 1e-9 && Skeleton.jointShapesSkin(j)
+    && !Skeleton.boneFloats(j);
+};
+
+// A FLOATING JOINT hangs off its parent with no bone between them (Blender's unconnected bone): it
+// moves with the parent, but the link is drawn as a thin relationship line, has no volume and
+// weights nothing. So the parent's one connected bone carries the shape -- a wrist's bone to the
+// middle knuckle IS the palm, and the other fingers float off the wrist with nothing in between.
+// Make Skin attaches a floating joint to the nearer end of its parent's connected bone
+// (SkinMesh adjacency). The flag lives on the CHILD, like everything else about the bone into it.
+Skeleton.boneFloats = function (j) { return !!(j && j._boneFloat); };
+Skeleton.setBoneFloats = function (j, on) {
+  if (!j) return;
+  if (on) j._boneFloat = true; else delete j._boneFloat;
 };
 
 // A BRANCH IS ONE FAMILY OF CAPSULES. A joint with several bones leaving it owns one capsule per
@@ -3560,6 +3573,7 @@ Skeleton.createJoint = function (main, pos, parent, name, opts) {
 
   if (opts && opts.silent) main.addMeshSilent(mesh);
   else main.addNewMesh(mesh);
+  Skeleton.ensureRigVisible(main);
 
   // The locator itself never draws — the flat bone/joint visuals represent it. colorWrite
   // off keeps CPU picking working (it uses geometry, not the material).
@@ -3722,8 +3736,20 @@ function ensureEntry(main, id) {
     link.isPickable = false;
     link.frustumCulled = false;
 
+    // A FLOATING joint's link to its parent (Skeleton.boneFloats): a thin dashed line where the
+    // bone would be, Blender's relationship line. Same LineSegments for the same reason.
+    const fGeo = new THREE.BufferGeometry();
+    fGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+    const floatLink = new THREE.LineSegments(fGeo, new THREE.LineDashedMaterial({
+      color: 0x9aa4b0, transparent: true, opacity: 0.7, depthWrite: false,
+    }));
+    floatLink.isPickable = false;
+    floatLink.frustumCulled = false;
+    floatLink.visible = false;
+
     e = {
       pinLink: link,
+      floatLink: floatLink,
       pinB: makePinPart(boxGeometry(), false),
       pinS: makePinPart(tetraGeometry(), false),
       // ROTATION-ONLY: the same box as the position / 6DOF pins (same size), told apart by colour.
@@ -3771,7 +3797,7 @@ function ensureEntry(main, id) {
                 e.wire.solid, e.wire.ghost,
                 e.cap.shaft.solid, e.cap.shaft.ghost,
                 e.cap.a.solid, e.cap.a.ghost, e.cap.b.solid, e.cap.b.ghost];
-    g.add(e.label.sprite, e.nameLabel.sprite, e.pinLink,
+    g.add(e.label.sprite, e.nameLabel.sprite, e.pinLink, e.floatLink,
           e.pinB.solid, e.pinB.ghost,
           e.pinS.solid, e.pinS.ghost,
           e.pinR.solid, e.pinR.ghost);
@@ -3785,9 +3811,10 @@ function disposeEntry(main, id) {
   const e = main._skelVis && main._skelVis.get(id);
   if (!e) return;
   const g = skelGroup(main);
-  if (e.pinLink) {
-    g.remove(e.pinLink);
-    e.pinLink.geometry.dispose(); e.pinLink.material.dispose();
+  for (const l of [e.pinLink, e.floatLink]) {
+    if (!l) continue;
+    g.remove(l);
+    l.geometry.dispose(); l.material.dispose();
   }
   // bone, joint, wire AND CAPSULE are batch SLOTS, not scene objects — they own no geometry or
   // material and are released with the batch itself.
@@ -4222,6 +4249,7 @@ Skeleton.updateVisuals = function (main) {
       e.pinS.solid.visible = e.pinS.ghost.visible = false;
       e.pinR.solid.visible = e.pinR.ghost.visible = false;
       e.pinLink.visible = false;
+      e.floatLink.visible = false;
       hideCaps(e);
       continue;
     }
@@ -4540,7 +4568,24 @@ Skeleton.updateVisuals = function (main) {
     }
 
     const parent = j._parentMesh;
-    const hasBone = Skeleton.isJoint(parent) && main.getMeshes().includes(parent);
+    const linked = Skeleton.isJoint(parent) && main.getMeshes().includes(parent);
+    const floats = linked && Skeleton.boneFloats(j);
+    const hasBone = linked && !floats;
+    if (floats && (showSolid || showWire)) {
+      Skeleton.jointPos(parent, _pA);
+      const pa = e.floatLink.geometry.getAttribute('position');
+      pa.setXYZ(0, _pA.x, _pA.y, _pA.z);
+      pa.setXYZ(1, _pB.x, _pB.y, _pB.z);
+      pa.needsUpdate = true;
+      e.floatLink.geometry.computeBoundingSphere();
+      const d = _pA.distanceTo(_pB);
+      e.floatLink.material.dashSize = d / 14;
+      e.floatLink.material.gapSize = d / 20;
+      e.floatLink.computeLineDistances();
+      e.floatLink.visible = true;
+    } else {
+      e.floatLink.visible = false;
+    }
     if (!hasBone) {
       e.bone.solid.visible = e.bone.ghost.visible = false;
       e.wire.solid.visible = e.wire.ghost.visible = false;
@@ -5983,7 +6028,7 @@ Skeleton.mirrorPose = function (main, side, controls) {
 // read and written through the mesh's own `_skin*` properties, so the two modules stay
 // uncoupled and there is no import cycle.
 const SKEL_MAGIC = 0x534b454c; // 'SKEL'
-const SKEL_VERSION = 33;  // v33 which pose fixes are muted; v32 a pose fix's offset on top of the skin pass (RigPoses.js); v31 a pose fix's details above the bound level (RigPoses.js), v30 named rig poses (RigPoses.js), v29 the scene's DELTA MUSH iterations, when it has a bound skin (heavy on GXR at the default 10, so it is a property of the scene, not the device); v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
+const SKEL_VERSION = 34;  // v34 which joints FLOAT off their parent (no bone, Skeleton.boneFloats); v33 which pose fixes are muted; v32 a pose fix's offset on top of the skin pass (RigPoses.js); v31 a pose fix's details above the bound level (RigPoses.js), v30 named rig poses (RigPoses.js), v29 the scene's DELTA MUSH iterations, when it has a bound skin (heavy on GXR at the default 10, so it is a property of the scene, not the device); v28 each OBJECT's pivot offset -- the hidden translate reference Bake Translate and Adjust Pivot lay down, so its translate values read 0; v27 each OBJECT's axis orient -- the hidden pre-rotation Edit Axes lays down, so its rotation channels read 0 (Transform._bakeObjectAxes); v26 each joint's HAND-LAID AXES -- a rest-space quaternion replacing JointFrame's guess; v25 each bone volume's TWIST about its bone; v24 each bone volume's SHARPNESS; v23 the BONE VOLUME shape -- width, height, offset and the two ends (none of it was saved before); v22 which outliner branches are collapsed / expanded (only rows the user has toggled, plus frame groups); v21 the outliner ORDER, as the mesh index at each rank (only when the user has moved a row); v20 which joints do NOT shape the skin (Shapes Skin off); v19 the joint SHAPE's rotation (Tweak Joint rings); v18 the LIGHT parameters — type, colour, intensity, range, cone, and the whole shadow group; without it a saved light reloaded as a plain sphere; v17 the three physics params added after v14 -- mass, substeps, iterations; v16 the SHADOW flags — which meshes catch the cast shadow, and which one IS the light (see render/SceneShadow.js); v3 adds the IK pin link per entry; v4 the selection lock; v5 the rest pose; v6 cages + hidden; v7 joint volumes (removed, section kept); v8 joint radii; v9 joint scale; v10 joint offset; v11 physics bones; v12 the BOUND LEVEL of each skin; v13 joint roundness (the squircle exponent); v14 the physics params v11 forgot, plus self-collision; v15 the node CONSTRAINTS — aim target, saccades (amp/speed/smooth), mirror-X
 // The pin mode as packed into the SKEL `bone` word: two low bits at 1, and since PIN_ROT the
 // third bit at 4 — bit 3 belongs to the selection lock and could not be borrowed. Written once
 // so the two readers below cannot drift apart, which is exactly how a bitfield goes wrong.
@@ -6396,6 +6441,10 @@ Skeleton.serialize = function (meshes, main) {
   }
   slots += 1;
   for (const d of fixMuted) slots += 2 + d.key.length;
+  // v34: joints that float off their parent (linked, no bone).
+  const floating = [];
+  meshes.forEach((m, i) => { if (m && m._isBone && Skeleton.boneFloats(m)) floating.push(i); });
+  slots += 1 + floating.length;
 
   const buf = new ArrayBuffer((slots + 2) * 4);
   const u = new Uint32Array(buf), f = new Float32Array(buf), i32 = new Int32Array(buf);
@@ -6529,6 +6578,8 @@ Skeleton.serialize = function (meshes, main) {
     u[o++] = d.key.length;
     for (let k = 0; k < d.key.length; k++) u[o++] = d.key.charCodeAt(k);
   }
+  u[o++] = floating.length;
+  for (const i of floating) u[o++] = i;
 
   u[o++] = SKEL_MAGIC; u[o++] = slots * 4;
   return buf;
@@ -6737,6 +6788,8 @@ Skeleton.deserialize = function (buffer, meshes, main) {
       if (!mesh) continue;
       rows.push({ mesh: mesh, parent: pi === NONE ? null : meshes[pi] || null, bone: bone, r: r, mir: mir, pin: pin });
     }
+    // A file that brings a rig in (the biped example, an import) is bones being added.
+    if (rows.some((row) => row.bone & 1)) Skeleton.ensureRigVisible(main);
 
     // THE SELECTION LOCK, for every row — a locked mesh is usually not a joint, so this runs
     // over all of them rather than inside the joint loop below. Written for the first time in
@@ -7283,6 +7336,10 @@ Skeleton.deserialize = function (buffer, meshes, main) {
         if (t) (t.correctiveMuted || (t.correctiveMuted = new Set())).add(key);
       }
     }
+    if (ver >= 34) {
+      const fn = u[o++];
+      for (let i = 0; i < fn && o < u.length; i++) Skeleton.setBoneFloats(meshes[u[o++]], true);
+    }
 
     for (const p of pendingPins) {
       if (p.pin) {
@@ -7563,6 +7620,30 @@ Skeleton.setDisplayFlag = function (name, on) {
   if (!e) return;
   window[e[0]] = !!on;
   getOptionsURL.saveOption(e[1], !!on, 0);
+};
+
+// BONES YOU JUST ADDED MUST BE VISIBLE. Solid and wire are both switchable off (matt turns them
+// off to animate), and with neither on -- or Hide All Decorations on -- the rig draws nothing.
+// Then adding the biped example, or drawing a joint, appears to do nothing at all. matt: "we
+// should enable wireframe bone draw at the very least."
+//
+// So anything that ADDS joints calls this: entering Bone Draw (SculptManager), creating a joint
+// (createJoint covers drawing, Duplicate, Split, Add Hand, Symmetrize) and loading a file that
+// carries a rig (deserialize). Only when BOTH are off -- wire alone off is a choice, not an
+// accident -- and it turns on WIRE, the lighter of the two. Raw reads, since those are the stored
+// choices rather than what the master switch is currently answering. True if it changed anything.
+Skeleton.ensureRigVisible = function (main) {
+  let changed = false;
+  if (Skeleton.decorationsHidden()) { Skeleton.setDecorationsHidden(main, false); changed = true; }
+  if (!Skeleton.displayFlagRaw('solid') && !Skeleton.displayFlagRaw('wire')) {
+    Skeleton.setDisplayFlag('wire', true);
+    changed = true;
+  }
+  if (changed) {
+    window.screenLog?.('Bones: wire display turned back on so the new bones show', 'cyan');
+    main?.syncToolPanels?.();
+  }
+  return changed;
 };
 
 // The joint the ray is preselecting, if any — what "clicked on a bone" means for a face
