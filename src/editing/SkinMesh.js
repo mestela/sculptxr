@@ -663,19 +663,43 @@ function transitionBand(fine, coarse, pushQuad) {
   return true;
 }
 
+//
+// A TIE IS BROKEN BY HANDEDNESS, NOT BY INDEX. A flattened volume makes both loops rectangles, and
+// two rolls then pair them at exactly the same cost, shearing the bridge one way round the bone or
+// the other. Taking the first in index order took a different one on each arm (the twin's loop runs
+// mirrored), so a flattened forearm came out sheared one way on the left and the other on the right.
+// Twist about the bone flips under a mirror, and so does the side of the body: their product picks
+// the mirror image of the left's choice on the right.
 function matchLoop(near, far, posAt) {
   const rev = far.slice().reverse();
   const L = rev.length;
-  let best = null, bestCost = Infinity;
+  const costs = [];
   for (let k = 0; k < L; k++) {
     let cost = 0;
     for (let i = 0; i < L; i++) cost += posAt(near[i]).distanceToSquared(posAt(rev[(i + k) % L]));
-    if (cost < bestCost) {
-      bestCost = cost;
-      best = [];
-      for (let i = 0; i < L; i++) best.push(rev[(i + k) % L]);
+    costs.push(cost);
+  }
+  const low = Math.min(...costs), tied = [];
+  for (let k = 0; k < L; k++) if (costs[k] <= low * (1 + 1e-6) + 1e-12) tied.push(k);
+  let pick = tied[0];
+  if (tied.length > 1) {
+    const cn = new THREE.Vector3(), cf = new THREE.Vector3();
+    for (let i = 0; i < L; i++) { cn.add(posAt(near[i])); cf.add(posAt(rev[i])); }
+    cn.divideScalar(L); cf.divideScalar(L);
+    const axis = new THREE.Vector3().subVectors(cf, cn), side = Math.sign(cn.x + cf.x);
+    const a = new THREE.Vector3(), b = new THREE.Vector3();
+    let top = -Infinity;
+    for (const k of tied) {
+      let tw = 0;
+      for (let i = 0; i < L; i++) {
+        a.copy(posAt(near[i])).sub(cn); b.copy(posAt(rev[(i + k) % L])).sub(cf);
+        tw += a.cross(b).dot(axis);
+      }
+      if (tw * side > top + 1e-9) { top = tw * side; pick = k; }
     }
   }
+  const best = [];
+  for (let i = 0; i < L; i++) best.push(rev[(i + pick) % L]);
   return best;
 }
 
@@ -1692,6 +1716,56 @@ const HAND_BRIDGE = 0.6;
 // Rings inside the bridge.
 const HAND_RINGS = 4;
 
+// A BAND OF QUADS BETWEEN TWO RINGS OF DIFFERENT COUNTS (an even difference), the general case of
+// transitionBand: each vertex of the smaller ring takes a run of 1 or 3 vertices on the larger one,
+// a run of 3 being a wedge (three on the busy side, one on the other) and every step between runs
+// an ordinary quad. Which vertices take the wedges is solved for, so every vertex is as near as it
+// can be, by angle about the limb, to the one it meets across the band. Rings in the same angular
+// direction; `rim` runs the way its kept faces do, `hand` the same way round.
+function quadZip(rim, angR, hand, angH, push) {
+  const fineIsHand = hand.length > rim.length;
+  const fine = fineIsHand ? hand : rim, coarse = fineIsHand ? rim : hand;
+  const aF = fineIsHand ? angH : angR, aC = fineIsHand ? angR : angH;
+  const F = fine.length, C = coarse.length;
+  const wrap = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+  const cost = (i, k) => { const d = wrap(aF[i % F] - aC[k]); return d * d; };
+  let best = Infinity, plan = null;
+  for (let s = 0; s < F; s++) {
+    let dp = new Float64Array(F + 1).fill(Infinity);
+    dp[0] = 0;
+    const back = [];
+    for (let k = 0; k < C; k++) {
+      const nd = new Float64Array(F + 1).fill(Infinity), bk = new Int8Array(F + 1);
+      for (let x = 0; x <= F; x++) {
+        if (dp[x] === Infinity) continue;
+        for (const g of [1, 3]) {
+          if (x + g > F) continue;
+          let c = dp[x];
+          for (let t = 0; t < g; t++) c += cost(s + x + t, k);
+          if (c < nd[x + g]) { nd[x + g] = c; bk[x + g] = g; }
+        }
+      }
+      back.push(bk);
+      dp = nd;
+    }
+    if (dp[F] < best - 1e-12) {
+      best = dp[F];
+      const sizes = new Array(C);
+      for (let k = C - 1, x = F; k >= 0; k--) { sizes[k] = back[k][x]; x -= sizes[k]; }
+      plan = { s, sizes };
+    }
+  }
+  if (!plan) return false;
+  const f = (i) => fine[(plan.s + i) % F];
+  for (let k = 0, p = 0; k < C; k++) {
+    const g = plan.sizes[k], c0 = coarse[k], c1 = coarse[(k + 1) % C], x = p + g - 1;
+    if (g === 3) push(fineIsHand ? [c0, f(p), f(p + 1), f(p + 2)] : [f(p + 2), f(p + 1), f(p), c0]);
+    push(fineIsHand ? [c1, c0, f(x), f(x + 1)] : [f(x + 1), f(x), c0, c1]);
+    p += g;
+  }
+  return true;
+}
+
 function attachHands(main, arr, hands) {
   const V = Array.from(arr.vertices);
   let F = Array.from(arr.faces);
@@ -1718,18 +1792,28 @@ function attachHands(main, arr, hands) {
     // beside a hanging hand) is touched.
     const W = Skeleton.jointPos(wrist), d = new THREE.Vector3().subVectors(W, Skeleton.jointPos(up)).normalize();
     const M = Skeleton.jointPos(hand.by.get('middle_01'));
-    const gap = HAND_BRIDGE * W.distanceTo(M);
     const handDir = new THREE.Vector3().subVectors(M, W).normalize();
-    const rf = Math.max(Skeleton.boneRadiusOf(main, wrist), 1e-6) * 3;
+    // The FOREARM's radius (stored on the wrist), widest way across: boneRadiusOf would take the
+    // hand's own bones, and a fattened palm then pulled the search out onto whatever lies beside it.
+    const sec = Skeleton.volumeSection(wrist);
+    const rArm = Math.max((wrist._boneRadius || Skeleton.boneRadiusOf(main, wrist)) * Math.max(1, sec[0], sec[1]), 1e-6);
+    const rf = rArm * 3;
+    // Never less than the forearm's own radius: the cut has to clear the forearm's rounded end, and a
+    // short palm (knuckles pulled in) left that end as a bulb under the hand.
+    const gap = Math.max(HAND_BRIDGE * W.distanceTo(M), rArm);
     const along = (f) => centroid(f, _c).sub(W).dot(d);
     const offAxis = (f) => { centroid(f, _c).sub(W); return _c.addScaledVector(d, -_c.dot(d)).length(); };
     const handFaces = new Set();
     for (let f = 0; f < fitted.faces.length / 4; f++) handFaces.add(F.length / 4 - fitted.faces.length / 4 + f);
-    let seed = -1, best = -Infinity;
+    // The seed is the face NEAREST THE WRIST: the furthest out along the forearm's line reached the
+    // hips past a flattened (wider) forearm, and that side's cut took the torso.
+    let seed = -1, best = Infinity;
     for (let f = 0; f < nFaces(); f++) {
       if (handFaces.has(f)) continue;
       const t = along(f);
-      if (t > -gap && t < rf * 2 && offAxis(f) < rf && t > best) { best = t; seed = f; }
+      if (!(t > -gap && t < rf && offAxis(f) < rf)) continue;
+      const dist = centroid(f, _c).distanceTo(W);
+      if (dist < best) { best = dist; seed = f; }
     }
     if (seed < 0) { console.warn('[skin] template hand: no forearm end found, hand left unjoined'); continue; }
     const edgeFaces = new Map();
@@ -1783,12 +1867,12 @@ function attachHands(main, arr, hands) {
       while (ring.length <= next.size && x !== undefined) { ring.push(x); x = next.get(x); if (x === ring[0]) break; }
     }
     const L = fitted.loop.length;
-    if (ring.length !== L || next.size !== L) {
-      console.warn('[skin] template hand: forearm cut gave a ' + next.size + '-edge rim, not ' + L + '; hand left unjoined');
+    if (ring.length !== next.size || ring.length < 3) {
+      console.warn('[skin] template hand: forearm cut is not one ring (' + next.size + ' edges); hand left unjoined');
       continue;
     }
     for (let f = nFaces() - 1; f >= 0; f--) if (cut.has(f)) F.splice(4 * f, 4);
-
+    const N = ring.length;
     // THE HAND'S RING in the order its faces run it, then turned round and rolled to sit against the
     // forearm's: the bridge runs each ring against the faces on both sides.
     const lp = fitted.loop.map((i) => i + base);
@@ -1800,16 +1884,58 @@ function attachHands(main, arr, hands) {
     }
     const hring = fwd ? lp.slice() : lp.slice().reverse();     // in face order
     const want = hring.slice().reverse();                      // bridge runs it backwards
-    let roll = 0, cost = Infinity;
     const a = new THREE.Vector3(), b = new THREE.Vector3();
-    for (let r = 0; r < L; r++) {
-      let s = 0;
-      for (let i = 0; i < L; i++) s += P(ring[i], a).distanceToSquared(P(want[(i + r) % L], b));
-      if (s < cost) { cost = s; roll = r; }
-    }
-    const B = ring.map((_, i) => want[(i + roll) % L]);
     // ring[i] -> ring[i+1] is the KEPT face's direction, so the bridge takes ring[i+1] -> ring[i];
-    // B is ordered the same way round, and the hand's faces run it the other way.
+    // B is ordered the same way round, and the hand's faces run it the other way. A holds, for each
+    // of B, the point on the forearm's rim its curve leaves from.
+    let B, A, zip = null;
+    if (N === L) {
+      let roll = 0, cost = Infinity;
+      for (let r = 0; r < L; r++) {
+        let s = 0;
+        for (let i = 0; i < L; i++) s += P(ring[i], a).distanceToSquared(P(want[(i + r) % L], b));
+        if (s < cost) { cost = s; roll = r; }
+      }
+      B = ring.map((_, i) => want[(i + roll) % L]);
+      A = ring.map((ri) => P(ri, new THREE.Vector3()));
+    } else {
+      // A FOREARM OF ANOTHER SECTION (a flattened or thinned volume changes how many sides its tube
+      // has): the rims are matched by ANGLE about the forearm, the hand's vertices leave from the
+      // forearm rim at their own angles, and the first band takes up the difference in counts with
+      // wedges (see quadZip). Angles about the axis reflect with the rig, so a mirrored pair of arms
+      // gets a mirrored pair of joins.
+      if ((N - L) % 2) { console.warn('[skin] template hand: forearm rim has ' + N + ' sides, odd against ' + L + '; hand left unjoined'); continue; }
+      const u = new THREE.Vector3(1, 0, 0).addScaledVector(d, -d.x);
+      if (u.lengthSq() < 0.04) u.set(0, 1, 0).addScaledVector(d, -d.y);
+      u.normalize();
+      const v = new THREE.Vector3().crossVectors(d, u);
+      const centre = (ids) => ids.reduce((s, i) => s.add(P(i, a)), new THREE.Vector3()).divideScalar(ids.length);
+      const cR = centre(ring), cB = centre(want);
+      const angOf = (ids, c) => ids.map((i) => { P(i, a).sub(c); return Math.atan2(a.dot(v), a.dot(u)); });
+      const wrap = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+      const sense = (ang) => Math.sign(ang.reduce((s, x, i) => s + wrap(ang[(i + 1) % ang.length] - x), 0));
+      let angR = angOf(ring, cR), angW = angOf(want, cB);
+      const sR = sense(angR), sW = sense(angW);
+      if (!sR || sR !== sW) { console.warn('[skin] template hand: rims run opposite ways; hand left unjoined'); continue; }
+      angR = angR.map((x) => x * sR); angW = angW.map((x) => x * sR);
+      const TAU = 2 * Math.PI, mod = (x) => ((x % TAU) + TAU) % TAU;
+      // Start the hand ring at the vertex nearest the rim's first.
+      let j0 = 0;
+      for (let j = 1; j < L; j++) if (Math.abs(wrap(angW[j] - angR[0])) < Math.abs(wrap(angW[j0] - angR[0]))) j0 = j;
+      B = want.map((_, i) => want[(i + j0) % L]);
+      const angB = angW.map((_, i) => angW[(i + j0) % L]);
+      const relR = angR.map((x) => mod(x - angR[0])).concat([TAU]);
+      const d0 = wrap(angB[0] - angR[0]);
+      const relB = angB.map((x) => d0 + mod(x - angB[0])).concat([d0 + TAU]);
+      A = relB.slice(0, L).map((th) => {
+        th = mod(th);
+        let j = 0;
+        while (j < N - 1 && relR[j + 1] <= th) j++;
+        const s = (th - relR[j]) / Math.max(relR[j + 1] - relR[j], 1e-9);
+        return P(ring[j], new THREE.Vector3()).lerp(P(ring[(j + 1) % N], b), Math.max(0, Math.min(1, s)));
+      });
+      zip = { angR, angB };
+    }
     let prev = ring;
     for (let k = 1; k <= HAND_RINGS + 1; k++) {
       let cur;
@@ -1819,8 +1945,8 @@ function attachHands(main, arr, hands) {
         // the hand, so the taper eases in and out rather than kinking at both rims.
         const t = k / (HAND_RINGS + 1), t2 = t * t, t3 = t2 * t;
         const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
-        cur = ring.map((ri, i) => {
-          P(ri, a); P(B[i], b);
+        cur = B.map((bi, i) => {
+          a.copy(A[i]); P(bi, b);
           const len = a.distanceTo(b);
           const x = new THREE.Vector3().copy(a).multiplyScalar(h00).addScaledVector(d, h10 * len)
             .addScaledVector(b, h01).addScaledVector(handDir, h11 * len);
@@ -1828,9 +1954,13 @@ function attachHands(main, arr, hands) {
           return V.length / 3 - 1;
         });
       }
-      for (let i = 0; i < L; i++) {
-        const i1 = (i + 1) % L;
-        F.push(prev[i1], prev[i], cur[i], cur[i1]);
+      if (k === 1 && zip) {
+        quadZip(prev, zip.angR, cur, zip.angB, (q) => F.push(q[0], q[1], q[2], q[3]));
+      } else {
+        for (let i = 0; i < L; i++) {
+          const i1 = (i + 1) % L;
+          F.push(prev[i1], prev[i], cur[i], cur[i1]);
+        }
       }
       prev = cur;
     }

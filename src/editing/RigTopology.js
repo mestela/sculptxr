@@ -713,10 +713,34 @@ function handPoints(main, wrist, side) {
   const T = HandTemplate.joints;
   const depth = (i) => { let d = 0; for (let q = T[i].p; q >= 0; q = T[q].p) d++; return d; };
   const order = T.map((_, i) => i).filter((i) => T[i].n !== 'wrist').sort((x, y) => depth(x) - depth(y));
-  return order.map((i) => {
+  const pts = order.map((i) => {
     const t = T[i], par = t.p >= 0 && T[t.p].n !== 'wrist' ? T[t.p].n + side : null;
     return { name: t.n + side, parent: par, pos: HandFit.toRig(t.pos, W, a, f, p, k, new THREE.Vector3()), r: t.r * k };
   });
+  // The palm slab (HandFit.PALM): one flat volume for the palm, in place of the four metacarpals'.
+  const P = HandFit.PALM;
+  pts.push({ name: 'palm' + side, parent: null, pos: HandFit.toRig(P.pos, W, a, f, p, k, new THREE.Vector3()), r: P.b0 * k, slab: P.a0 / P.b0 });
+  return pts;
+}
+
+// The slab's section and turn, once the knuckles exist: as wide as the palm across them. A twin
+// takes the negated twist (the volume convention, Skeleton.setVolumeTwist), so the pair mirror.
+function setupPalm(main, joints, side, twinTwist) {
+  const by = Object.fromEntries(joints.map((j) => [j._permanentStaticLabel, j]));
+  const palm = by['palm' + side];
+  if (!palm) return 0;
+  for (const fn of ['index', 'middle', 'ring', 'pinky']) {
+    for (const s of ['_00', '_01']) if (by[fn + s + side]) Skeleton.setJointShapesSkin(by[fn + s + side], false);
+  }
+  Skeleton.setVolumeSection(palm, HandFit.PALM.a0 / HandFit.PALM.b0, 1);
+  let tw = twinTwist;
+  if (tw === undefined) {
+    const fr = Skeleton.volumeFrame(main, palm);
+    const across = Skeleton.jointPos(by['index_01' + side]).sub(Skeleton.jointPos(by['pinky_01' + side]));
+    tw = Math.atan2(across.dot(fr.e3), across.dot(fr.e1));
+  }
+  Skeleton.setVolumeTwist(palm, tw);
+  return Skeleton.volumeTwist(palm);
 }
 
 RigTopology.addHand = function (main, wrist) {
@@ -761,6 +785,7 @@ RigTopology.addHand = function (main, wrist) {
     return joints;
   };
   const mine = build(wrist, pts);
+  const palmTwist = setupPalm(main, mine, side);
   if (twin) {
     const tw = (n) => n && n.slice(0, n.length - side.length) + tSide;
     const mp = pts.map((e) => Object.assign({}, e, {
@@ -768,6 +793,7 @@ RigTopology.addHand = function (main, wrist) {
       pos: Skeleton.mirrorPoint(e.pos, plane, new THREE.Vector3()),
     }));
     const theirs = build(twin, mp);
+    setupPalm(main, theirs, tSide, -palmTwist);
     mine.forEach((j, i) => { j._boneMirror = theirs[i]; theirs[i]._boneMirror = j; });
   }
 

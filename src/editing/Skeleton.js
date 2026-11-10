@@ -2368,9 +2368,11 @@ Skeleton.setVolumeEnds = function (j, e0, e1) {
 };
 
 // The volumes leaving a joint, in a fixed order (id), and which one a selection is editing.
+// A hand's palm slab (Add Hand) comes first: selecting the wrist edits the palm.
 Skeleton.volumeKids = function (main, p) {
+  const slab = (k) => (/^palm(_[LR])?$/.test(k._permanentStaticLabel || '') ? 0 : 1);
   return Skeleton.joints(main).filter((k) => k._parentMesh === p && Skeleton.boneHasCapsule(k))
-    .sort((a, b) => a.getID() - b.getID());
+    .sort((a, b) => slab(a) - slab(b) || a.getID() - b.getID());
 };
 Skeleton.volumeActive = function (main, p) {
   const kids = Skeleton.volumeKids(main, p);

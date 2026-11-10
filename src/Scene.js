@@ -7780,7 +7780,7 @@ class Scene {
   // a joint whose children are gone.
   deleteJointSubtree(joint) {
     if (!joint || this.getIndexMesh(joint) < 0) return false;
-    const toRemove = this._withDescendants([joint]);
+    const toRemove = this._withDescendants(this._withJointTwins([joint]));
     this.notifyNomadDeleted?.(toRemove);
     this.removeMeshes(toRemove);
     this._stateManager.pushStateRemove(toRemove.slice());
@@ -7795,13 +7795,25 @@ class Scene {
     return true;
   }
 
+  // A DELETED JOINT TAKES ITS MIRROR TWIN when symmetry is on, like every other joint edit. matt:
+  // "select the end hand joint and delete, if i have symmetry turned on, it should delete both sides."
+  _withJointTwins(list) {
+    if (!Skeleton.mirrorEdits(this)) return list;
+    const out = list.slice();
+    for (const m of list) {
+      const t = m && Skeleton.isJoint(m) ? m._boneMirror : null;
+      if (t && t !== m && !out.includes(t) && this.getIndexMesh(t) >= 0) out.push(t);
+    }
+    return out;
+  }
+
   deleteCurrentSelection() {
     if (!this._mesh)
       return;
 
     // Expand to include FrameGroup children so the whole animated unit is deleted (and
     // recorded for undo) — not just the group null, which would leave orphaned frames.
-    const toRemove = this._withDescendants(this._selectMeshes);
+    const toRemove = this._withDescendants(this._withJointTwins(this._selectMeshes));
     this.notifyNomadDeleted(toRemove);
     this.removeMeshes(toRemove);
     this._stateManager.pushStateRemove(toRemove.slice());
