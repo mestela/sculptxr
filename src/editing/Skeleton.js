@@ -2380,6 +2380,27 @@ Skeleton.volumeActive = function (main, p) {
   const at = (main._volActive && main._volActive.get(p.getID())) || 0;
   return kids[at % kids.length];
 };
+// THE BONE A SELECTED JOINT'S SHAPES SKIN TOGGLE MEANS: the one leaving it, like every volume edit
+// (the one being edited when there are several). matt: selecting the clavicles' root and turning it off
+// took the spine bone above it, "this feels wrong". With nothing live leaving it, the first switched-off
+// bone leaving it (so the toggle turns it back on); a leaf means its own bone.
+Skeleton.shapesSkinBone = function (main, p) {
+  // The bone just switched off stays the target (so the button reads off, and turns it back on) until
+  // another volume is picked: switching it off moved volumeActive on to the next live one.
+  const pin = main._shapesSkinPick && main._shapesSkinPick.get(p.getID());
+  const at = (main._volActive && main._volActive.get(p.getID())) || 0;
+  if (pin && pin.bone._parentMesh === p && pin.at === at && main.getIndexMesh(pin.bone) >= 0
+    && !Skeleton.jointShapesSkin(pin.bone)) return pin.bone;
+  const live = Skeleton.volumeActive(main, p);
+  if (live) return live;
+  const off = Skeleton.joints(main).filter((k) => k._parentMesh === p && (k._boneRadius || 0) > 1e-9
+    && !Skeleton.boneFloats(k)).sort((a, b) => a.getID() - b.getID());
+  return off[0] || p;
+};
+Skeleton.pinShapesSkinBone = function (main, p, bone) {
+  if (!main._shapesSkinPick) main._shapesSkinPick = new Map();
+  main._shapesSkinPick.set(p.getID(), { bone: bone, at: (main._volActive && main._volActive.get(p.getID())) || 0 });
+};
 Skeleton.volumeCycle = function (main, p) {
   const n = Skeleton.volumeKids(main, p).length;
   if (n < 2) return false;

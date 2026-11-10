@@ -7787,7 +7787,7 @@ class Scene {
     this._unbindOrphanedSkins(toRemove);
     this._selectMeshes = (this._selectMeshes || []).filter((m) => !toRemove.includes(m));
     if (toRemove.includes(this._mesh)) {
-      this.setOrUnsetMesh(this._meshes[this._meshes.length - 1] || null, false);
+      this.setOrUnsetMesh(this._survivingParent(joint, toRemove) || this._meshes[this._meshes.length - 1] || null, false);
     }
     Skeleton.updateVisuals(this);
     Skeleton.refreshOutliner(this);
@@ -7813,6 +7813,7 @@ class Scene {
 
     // Expand to include FrameGroup children so the whole animated unit is deleted (and
     // recorded for undo) — not just the group null, which would leave orphaned frames.
+    const picked = this._selectMeshes.slice();
     const toRemove = this._withDescendants(this._withJointTwins(this._selectMeshes));
     this.notifyNomadDeleted(toRemove);
     this.removeMeshes(toRemove);
@@ -7822,7 +7823,18 @@ class Scene {
     // Re-select a remaining mesh so the outliner keeps showing its transform/rig controls —
     // an empty selection blanks most of the panel (those only render for a single selection).
     // Null when the scene is now empty.
-    this.setOrUnsetMesh(this._meshes[this._meshes.length - 1] || null, false);
+    // A deleted joint leaves its parent selected, so delete-the-hand then Add Hand lands on the
+    // wrist -- the last mesh was the other arm's elbow, and Add Hand took its wrist as a stub.
+    const parent = picked.map((m) => this._survivingParent(m, toRemove)).find(Boolean);
+    this.setOrUnsetMesh(parent || this._meshes[this._meshes.length - 1] || null, false);
+  }
+
+  // The nearest ancestor joint of `m` that survives a removal, or null.
+  _survivingParent(m, removed) {
+    if (!m || !Skeleton.isJoint(m)) return null;
+    let p = m._parentMesh;
+    while (p && removed.includes(p)) p = p._parentMesh;
+    return p && Skeleton.isJoint(p) && this.getIndexMesh(p) >= 0 ? p : null;
   }
 
   // A SKIN WHOSE SKELETON IS GONE IS UNBOUND WITH IT (matt: "if i delete a skeleton, then the

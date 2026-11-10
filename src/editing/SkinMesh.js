@@ -1039,15 +1039,25 @@ function worldExtents(list, along) {
   }
   return h;
 }
-function volumeShapes(main, all) {
+function volumeShapes(main, all, skip) {
   if (!Skeleton.displayFlag('volumes')) return null;
   const vols = [], touching = new Map();
   const touch = (j, v) => { if (!touching.has(j)) touching.set(j, []); touching.get(j).push(v); };
+  // A BONE WITH SHAPES SKIN OFF THAT THE SKIN STILL HAS TO CROSS (its end joint keeps a box because a
+  // live bone leaves it) keeps its drawn volume FOR THE SHAPE ONLY: drawing and weights read
+  // boneHasCapsule, still false. Without it a clavicle switched off joined the chest as a strand.
+  const crossed = (j) => skip && !skip.has(j) && !Skeleton.jointShapesSkin(j) && (j._boneRadius || 0) > 1e-9
+    && !Skeleton.boneFloats(j) && Skeleton.isJoint(j._parentMesh);
   for (const j of all) {
-    if (!Skeleton.boneHasCapsule(j)) continue;
+    if (!Skeleton.boneHasCapsule(j) && !crossed(j)) continue;
     const f = Skeleton.volumeFrame(main, j);
     if (!(f.len > 1e-9)) continue;
-    const v = { j: j, p: j._parentMesh, f: f, rw: Math.max(f.r * f.W, 1e-6), rh: Math.max(f.r * f.H, 1e-6) };
+    // A bone leaving a joint with Shapes Skin off (a clavicle's pivot) belongs to the joint the lattice
+    // hangs it from (adjacency), or that joint's box and hub never see it: the chest stayed spine-thin
+    // and the arm left it through a neck. Floating joints have their own route (adjacency's attach).
+    let p = j._parentMesh;
+    while (skip && skip.has(p) && !Skeleton.boneFloats(p) && Skeleton.isJoint(p._parentMesh)) p = p._parentMesh;
+    const v = { j: j, p: p, f: f, rw: Math.max(f.r * f.W, 1e-6), rh: Math.max(f.r * f.H, 1e-6) };
     vols.push(v);
     touch(j, v);
     touch(v.p, v);
@@ -1988,9 +1998,36 @@ function attachHands(main, arr, hands) {
 // Not the hips: legs floating off a pelvis this way meet in one trunk (a wishbone, hips .39 against
 // .245 on biped_resculpt), because the thigh tops are where the hip mass is. Hips keep connected
 // hip bones.
-function skinSkip(all) {
+//
+// SHAPES SKIN IS PER BONE (the flag sits on the bone's end joint, like its volume): off, the bone has
+// no volume. Its end joint keeps its box while a live volume still leaves it -- a clavicle switched off
+// keeps the shoulder -- and goes when none does, so a pivot with every bone off leaves no trace.
+// A joint BURIED in its parent's volumes (a clavicle's pivot inside the chest) gets no box either way:
+// a box in there can only dent the chest, and its bones hang from the parent instead (adjacency).
+// matt, on the clavicle rig as drawn: "this shoulder layout is terrible".
+function skinSkip(main, all) {
   const parents = new Set(all.map((k) => k._parentMesh));
-  return new Set(all.filter((j) => !Skeleton.jointShapesSkin(j) || (Skeleton.boneFloats(j) && parents.has(j))));
+  const live = all.filter((k) => Skeleton.boneHasCapsule(k));
+  const liveFrom = new Set(live.map((k) => k._parentMesh));
+  const buried = (j) => {
+    const p = j._parentMesh, x = Skeleton.jointPos(j);
+    return live.some((k) => (k === p || k._parentMesh === p) && k !== j && insideVolume(main, k, x));
+  };
+  return new Set(all.filter((j) => !Skeleton.jointShapesSkin(j) && !liveFrom.has(j)
+    || (parents.has(j) && buried(j))
+    || (Skeleton.boneFloats(j) && parents.has(j))));
+}
+// Whether model-space point x is inside bone k's drawn volume SHAFT (not its domes: a short neck
+// sits in the chest's dome and must keep its box).
+function insideVolume(main, k, x) {
+  const f = Skeleton.volumeFrame(main, k, {});
+  if (!(f.len > 1e-9)) return false;
+  const rw = Math.max(f.r * f.W, 1e-6), rh = Math.max(f.r * f.H, 1e-6);
+  const q = new THREE.Vector3().subVectors(x, f.C0), t = q.dot(f.d);
+  const out = t < 0 ? -t : Math.max(0, t - f.axial);
+  q.addScaledVector(f.d, -Math.max(0, Math.min(f.axial, t)));
+  const u = q.dot(f.e1) / rw, w = q.dot(f.e3) / rh;
+  return out === 0 && u * u + w * w <= 1;
 }
 
 // Build a skin for the whole skeleton and add it to the scene as a new mesh.
@@ -2000,7 +2037,7 @@ function skinSkip(all) {
 // proportions are the ones already drawn.
 SkinMesh.build = function (main) {
   const { all, hands } = skinJoints(main);
-  const skip = skinSkip(all);
+  const skip = skinSkip(main, all);
   const joints = skip.size ? all.filter((j) => !skip.has(j)) : all;
   if (!joints.length) return { ok: false, why: 'draw a bone chain first' };
 
@@ -2008,7 +2045,7 @@ SkinMesh.build = function (main) {
   if (!topo.bones.length) return { ok: false, why: 'skeleton has no bones (a chain needs 2+ joints)' };
 
   const t0 = performance.now();
-  _vols = volumeShapes(main, all);
+  _vols = volumeShapes(main, all, skip);
   let arr = buildArrays(joints, topo);
   if (!arr) return { ok: false, why: 'could not build a skin from this skeleton' };
   if (hands.length) arr = attachHands(main, arr, hands);
@@ -2051,12 +2088,12 @@ SkinMesh.build = function (main) {
 //     being divided as far as it goes.
 SkinMesh.attachments = function (main) {
   const { all } = skinJoints(main);
-  const skip = skinSkip(all);
+  const skip = skinSkip(main, all);
   const joints = skip.size ? all.filter((j) => !skip.has(j)) : all;
   if (!joints.length) return null;
   const topo = adjacency(joints, skip);
   if (!topo.bones.length) return null;
-  _vols = volumeShapes(main, all);
+  _vols = volumeShapes(main, all, skip);
   layoutCages(joints, topo);
 
   const boxes = new Map();

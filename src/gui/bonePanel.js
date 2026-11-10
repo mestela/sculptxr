@@ -510,9 +510,9 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.lbl}">Sharpness (${roundName})</span>
       <input type="range" id="bone-round" min="20" max="120" step="5" value="${Math.round(roundVal*10)}">
       <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
-    </div>
+    </div>` : ''}${roundSel.length === 1 ? `
     <button class="${c.wide}" id="bone-rot-reset">Unrotate</button>
-    <button class="${c.wide}${Skeleton.jointShapesSkin(roundTarget) ? ' active' : ''}" id="bone-shapes-skin" title="Off: Make Skin leaves this joint out, and the bone leading INTO it gets no capsule (drawn, baked or bound). For pivots like a scapula, a jaw or a twist bone. Its own outgoing bones are unaffected.">Shapes Skin</button>` : ''}`;
+    <button class="${c.wide}${Skeleton.jointShapesSkin(roundSel.length === 1 ? Skeleton.shapesSkinBone(main, roundSel[0]) : null) ? ' active' : ''}" id="bone-shapes-skin" title="The bone leaving this joint (the volume being edited). Off: it has no volume, so it shapes no skin and takes no weight; it still deforms. A joint buried in its parent&#39;s volume with its bone off leaves the skin altogether, like a clavicle&#39;s pivot inside the chest.">Shapes Skin</button>` : ''}`;
 
     const viewBody = buildBoneQuickDisplayHTML(main, style) + `
     <div class="${c.toggles}">
@@ -608,9 +608,9 @@ export function buildBoneAuthoringHTML(main, style) {
       <span class="${c.lbl}">Sharpness (${roundName})</span>
       <input type="range" id="bone-round" min="20" max="120" step="5" value="${Math.round(roundVal*10)}">
       <span class="${c.val}" id="bone-round-val">${roundVal.toFixed(1)}</span>
-    </div>
+    </div>` : ''}${roundSel.length === 1 ? `
     <button class="${c.wide}" id="bone-rot-reset">Unrotate</button>
-    <button class="${c.wide}${Skeleton.jointShapesSkin(roundTarget) ? ' active' : ''}" id="bone-shapes-skin" title="Off: Make Skin leaves this joint out, and the bone leading INTO it gets no capsule (drawn, baked or bound). For pivots like a scapula, a jaw or a twist bone. Its own outgoing bones are unaffected.">Shapes Skin</button>` : ''}
+    <button class="${c.wide}${Skeleton.jointShapesSkin(roundSel.length === 1 ? Skeleton.shapesSkinBone(main, roundSel[0]) : null) ? ' active' : ''}" id="bone-shapes-skin" title="The bone leaving this joint (the volume being edited). Off: it has no volume, so it shapes no skin and takes no weight; it still deforms. A joint buried in its parent&#39;s volume with its bone off leaves the skin altogether, like a clavicle&#39;s pivot inside the chest.">Shapes Skin</button>` : ''}
     <div class="${c.toggles}">
       ${flagButton(c, 'snap', 'Snap Plane', snap)}
       ${flagButton(c, 'axis', 'Snap Axis', axis)}
@@ -1291,10 +1291,12 @@ export function wireBoneSection(root, main, opts) {
   q('shapes-skin')?.addEventListener('click', () => {
     const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
     if (sel.length !== 1) return;
-    const twin = Skeleton.mirrorEdits(main) ? sel[0]._boneMirror : null;
-    const rows = [sel[0]];
-    if (twin && twin !== sel[0] && main.getMeshes?.().includes(twin)) rows.push(twin);
-    const on = !Skeleton.jointShapesSkin(sel[0]);
+    const bone = Skeleton.shapesSkinBone(main, sel[0]);
+    Skeleton.pinShapesSkinBone(main, sel[0], bone);
+    const twin = Skeleton.mirrorEdits(main) ? bone._boneMirror : null;
+    const rows = [bone];
+    if (twin && twin !== bone && main.getMeshes?.().includes(twin)) rows.push(twin);
+    const on = !Skeleton.jointShapesSkin(bone);
     const apply = (v) => {
       for (const j of rows) Skeleton.setJointShapesSkin(j, v);
       q('shapes-skin')?.classList.toggle('active', v);
@@ -1307,7 +1309,7 @@ export function wireBoneSection(root, main, opts) {
     };
     apply(on);
     main.getStateManager?.()?.pushStateCustom?.(
-      () => apply(!on), () => apply(on), false, on ? 'Joint Shapes Skin' : 'Joint Deform Only');
+      () => apply(!on), () => apply(on), false, on ? 'Bone Shapes Skin' : 'Bone Deform Only');
     refresh();
   });
 
@@ -2214,7 +2216,7 @@ export function syncBoneSection(root, main) {
   setFlag('sym', !!main.getSculptManager?.()?._symmetry);
   {
     const sel = (main.getSelectedMeshes?.() || []).filter((m) => Skeleton.isJoint(m));
-    if (sel.length === 1) setFlag('shapes-skin', Skeleton.jointShapesSkin(sel[0]));
+    if (sel.length === 1) setFlag('shapes-skin', Skeleton.jointShapesSkin(Skeleton.shapesSkinBone(main, sel[0])));
 
   }
   {
